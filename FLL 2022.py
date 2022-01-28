@@ -1,48 +1,62 @@
 # pyright: reportMissingImports=false
-
 from spike import Button, ColorSensor, LightMatrix, MotionSensor, Motor, MotorPair, PrimeHub
 import math
 import time
 
-# Motors
-lm = Motor('B')
-rm = Motor('C')
+# Hub
+hub = PrimeHub()
+hub.status_light.off()
 
-pair = MotorPair('B','C')
+# Motors
+lm = Motor('A')
+rm = Motor('B')
+
+lm.set_stop_action('hold')
+rm.set_stop_action('hold')
+pair = MotorPair('A','B')
 pair.set_motor_rotation(17.6 * math.pi, 'cm') # Sizes: Small (5.6cm) Large (17.6cm)
 
+lmm = Motor('C')
+rmm = Motor('D')
 
 # Sensors
 lls = ColorSensor('E')
 rls = ColorSensor('F')
 
-gyro = MotionSensor('A')
+gyro = MotionSensor()
 
 # Constants
 minRef = 0
 maxRef = 100
-    
-    
-def line_follow(kp,
-                ki,
-                kd,
-                speed,
+
+
+def pauseloop():
+    hub.status_light.on('red')
+    while not hub.left_button.is_pressed() and not hub.right_button.is_pressed():
+        pass
+    hub.status_light.on('green')
+
+def reset_m():
+    rm.set_degrees_counted(0)
+    lm.set_degrees_counted(0)
+
+def line_follow(speed,
                 deg,
                 target = None,
                 right_edge = True,
-                rls = True,
+                right_ls = True,
                 forward = True,
                 scaling = True,
-                track_right = True):    
+                track_right = True):
 
     if target is None: raise ValueError('Missing Light Value')
-    if scaling: target_light_intensity = (100 * (target - minRef ) / ( maxRef - minRef))          
-    
-    if rls: ls = rls
+    if scaling: target_light_intensity = (100 * (target - minRef ) / ( maxRef - minRef))
+
+    if right_ls: ls = rls
     else: ls = lls
     if right_edge: polarity = 1
-    else: polarity = -1 
-    
+    else: polarity = -1
+
     if track_right: tracked_motor = rm
     else: tracked_motor = lm
     if not forward:
@@ -51,9 +65,8 @@ def line_follow(kp,
 
     last_error = error = integral = 0.0
     derivative = 0.0
-    
-    rm.set_degrees_counted(0)
-    lm.set_degrees_counted(0)
+
+    reset_m()
 
     while not abs(tracked_motor.get_degrees_counted()) > deg:
         if scaling:
@@ -66,15 +79,15 @@ def line_follow(kp,
             integral = 0
         else:
             integral = integral + error
-        
+
         derivative = error - last_error
         last_error = error
 
-        steering = (kp * error) + (ki * integral) + (kd * derivative)
+        steering = round((lkp * error) + (lki * integral) + (lkd * derivative))
 
         pair.start(steering = steering, speed = speed)
 
-        # print('ref:{ref}, error:{err}, steering:{steer} '.format(ref = reflected_light_intensity, steer = steering, err = error))
+        print('ref:{ref}, error:{err}, steering:{steer} '.format(ref = reflected_light_intensity, steer = steering, err = error))
     pair.stop()
 
 def line_align(start_spd,
@@ -160,11 +173,11 @@ def line_align(start_spd,
                     pass
 
     # Fine Adjustment
-    start = time.time()
-    end = time.time()
+    start = time.ticks_ms()
+    end = time.ticks_ms()
 
 
-    while not (end - start) > maxduration:
+    while not (end - start) > maxduration/1000:
 
         if lls.get_reflected_light() < lls_target_light_intensity:
             lm.start(speed = forward_spd)
@@ -188,7 +201,7 @@ def line_align(start_spd,
             break
         
         if timeout:
-            end = time.time()
+            end = time.ticks_ms()
         else:
             end = start
     
@@ -198,14 +211,11 @@ def line_align(start_spd,
     # print(lls.get_reflected_light())
     # print(rls.get_reflected_light())
 
-def gyro_straight(kp,
-                ki,
-                kd,
-                speed,
+def gyro_straight(speed,
                 deg,
                 target = None,
                 forward = True,
-                track_right = True): 
+                track_right = True):
 
     if target is None: raise ValueError('Missing Gyro Value')
     if not forward:
@@ -216,9 +226,8 @@ def gyro_straight(kp,
     if track_right: tracked_motor = rm
     else: tracked_motor = lm
 
-    rm.set_degrees_counted(0)
-    lm.set_degrees_counted(0)
-    
+    reset_m()
+
     while not abs(tracked_motor.get_degrees_counted()) > deg:
         error = target - gyro.get_yaw_angle()
 
@@ -226,41 +235,44 @@ def gyro_straight(kp,
             integral = 0
         else:
             integral = integral + error
-        
+
         derivative = error - last_error
         last_error = error
 
-        steering = (kp * error) + (ki * integral) + (kd * derivative)
+        steering = (gkp * error) + (gki * integral) + (gkd * derivative)
 
-        pair.start(steering = steering, speed = speed)
-    
+        pair.start(steering = round(steering), speed = speed)
+
     pair.stop()
 
-def gyro_turn(target):
-    
-    while True:
-        correction = target - gyro.get_yaw_angle()
-        if abs(correction) > 20:
-            speed = abs(correction)/2
-        else:
-            speed = 10
-        if correction > 0:
-            pair.start(steering = 100, speed = speed)
-        elif correction < 0:
-            pair.start(steering = -100, speed = speed)
-        else:
-            break
+def gyro_turn(speed, target):
+    while not abs(gyro.get_yaw_angle()) > abs(target):
+        if target > 0: pair.start(steering = 100, speed = speed)
+        else: pair.start(steering = -100, speed = speed)
 
 
-        
-# Run 1 
+# Global Constants
 
+## Run 1
+
+# Run 1 Constants
+gkp = 1
+gki = 0
+gkd = 0
+
+lkp = 0
+lki = 0 
+lkd = 0
+
+# Run 1 starts
 gyro.reset_yaw_angle()
-gyro_turn(90)
-gyro_straight(1,0,2,30,300,target = 90)
 
+# line_align(10,1.5,2, target = 65, correction_spd = 20, timeout = True)
 
-# Run 2
+# line_follow(30, 1000000, target = 65, right_ls = True)
 
 
 raise SystemExit
+
+## Run 2
+
