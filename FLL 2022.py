@@ -1,6 +1,6 @@
 # pyright: reportMissingImports=false
 
-from spike import Button, ColorSensor, LightMatrix, MotionSensor, Motor, MotorPair, PrimeHub
+from spike import ColorSensor, MotionSensor, Motor, MotorPair, PrimeHub
 import math
 import time
 
@@ -42,13 +42,27 @@ def cal_spd(speed, motor):
 
     if motor == 'rm': return(rm_polarity*speed)
     elif motor == 'lm': return(lm_polarity*speed)
-    else: raise ValueError('Unspecified')
+
+def reset_m():
+    rm.set_degrees_counted(0)
+    lm.set_degrees_counted(0)
 
 def pauseloop():
     hub.status_light.on('red')
     while not hub.left_button.is_pressed() and not hub.right_button.is_pressed():
         pass
     hub.status_light.on('green')
+
+def measure_m():
+
+    reset_m()
+    
+    while not hub.left_button.is_pressed() and not hub.right_button.is_pressed():
+        print("RM: {rm}, LM: {lm}".format(rm = rm.get_degrees_counted(), lm = lm.get_degrees_counted()))
+    
+    reset_m()
+    measure_m()
+    
 
 def calibrate_ls():
 
@@ -88,13 +102,6 @@ def calibrate_ls():
             print('minref: {minref}, maxref: {maxref}'.format(maxref = maxRef,
                                                             minref = minRef))
 
-
-
-
-
-def reset_m():
-    rm.set_degrees_counted(0)
-    lm.set_degrees_counted(0)
 
 def line_follow(speed,
                 deg,
@@ -145,45 +152,6 @@ def line_follow(speed,
 
         print('ref:{ref}, error:{err}, steering:{steer} '.format(ref = reflected_light_intensity, steer = steering, err = error))
     pair.stop()
-
-def dline_follow(speed,
-                deg,
-                right_edge = True,
-                forward = True,
-                scale_ref = False,
-                track_right = True):
-
-    if track_right: tracked_motor = rm
-    else: tracked_motor = lm
-    if not forward:
-        speed *= -1
-
-    last_error = error = integral = 0.0
-    derivative = 0.0
-
-    reset_m()
-
-    while not abs(tracked_motor.get_degrees_counted()) > deg:
-        if scale_ref:
-            error = (100 * (lls.get_reflected_light() - minRef ) / ( maxRef - minRef )) - (100 * (rls.get_reflected_light() - minRef ) / ( maxRef - minRef ))
-        else:
-            error = lls.get_reflected_light() - rls.get_reflected_light()
-    
-        if error == 0:
-            integral = 0
-        else:
-            integral = integral + error
-
-        derivative = error - last_error
-        last_error = error
-
-        steering = round((lkp * error) + (lki * integral) + (lkd * derivative))
-
-        pair.start(steering = steering, speed = speed)
-
-        print('error:{err}, steering:{steer} '.format(steer = steering, err = error))
-    pair.stop()
-
 
 def line_align(start_spd,
         maxduration,
@@ -342,52 +310,70 @@ def gyro_straight(speed,
 
     pair.stop()
 
-def gyro_turn(target, marginoferror, speed, sec, timeout = True):
+def gyro_turn(target, marginoferror, speed, timeout = False):
     start = time.ticks_ms()
     end = time.ticks_ms()
+    
+    if type(timeout) == 'int': sec = timeout 
+    else: sec = 0
 
-    while not end-start > sec*1000:
-        o_yaw = gyro.get_yaw_angle()
+    while not (end-start) > sec*1000:
+        o_yaw = gyro.get_yaw_angle() + 5 # Constant Error
         if target - o_yaw < 0:
-            pair.steering(speed = speed, steering = -100)
+            pair.start(speed = speed, steering = -100)
         elif target - o_yaw > 0:
-            pair.steering(speed = speed, steering = 100)
+            pair.start(speed = speed, steering = 100)
         elif abs(target - o_yaw) <= marginoferror:
             break
-        
+
         if timeout: end = time.ticks_ms()
-    
+
     lm.stop()
     rm.stop()
 
 
 # Global Constants
 
-## Run 1
+## Run 2
 
-# Run 1 Constants
+# Run 2 Constants
 gkp = 3
 gki = 0
 gkd = 0.5
 
-gtkp = 1
+lm.set_stop_action('coast')
+rm.set_stop_action('coast')
 
-lkp = 0.45
+lkp = 1.5
 lki = 0
-lkd = 0.45
+lkd = 0.14
 
 # Run 1 starts
 gyro.reset_yaw_angle()
 
-# line_align(10,1.5,2, target = 75, correction_spd = 10, timeout = True)
+# Move to Area
+gyro_straight(20, 120, target = 0)
+line_follow(20, 600, right_edge = True, right_ls = True, target = 68, scale_ref = True)
 
-# line_follow(15, 100000, target = 62, right_ls = False, right_edge = False , scale_ref = True)
+# M05
+gyro_straight(15, 200, target = 45)
+# Move Attachment 
 
-# gyro_straight(20, 10000, target = 0)
+# Move back to Area
+pair.move(100, unit = 'degrees', steering = 0, speed = -20)
+gyro_turn(45, 0, 20, timeout = False)
+pair.move(50, unit = 'degrees', steering = 0, speed = -20)
+line_align(10,1.5,2, target = 75, correction_spd = 10, timeout = True, beforeline = False)
 
-# calibrate_ls()
+#
+
+## Run 2
+
 
 
 raise SystemExit
 
-## Run 2
+
+
+
+
